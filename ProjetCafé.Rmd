@@ -1,0 +1,869 @@
+---
+title: ""
+author: ""
+date: ""
+header-includes:
+- \usepackage{fancyhdr}
+- \usepackage{hyperref}
+- \pagestyle{fancy}
+- \fancyhead[L]{\markboth}
+- \fancyfoot[R]{\includegraphics[width=1.5cm]{logo_Mecen.jpg}}
+- \fancyfoot[L]{\includegraphics[width=2.5cm]{logo_universite_tours.jpg}}
+- \newcommand\myfontsize{\fontsize{20pt}{16pt}\selectfont}
+- \newcommand{\HRule}{\rule{\linewidth}{0.7mm}}
+output:
+  pdf_document:
+    toc: no
+    number_section: yes
+    keep_tex: yes
+    highlight: "tango"
+    df_print: kable
+    dev: png
+    extra_dependencies: ['fancyhdr']
+  html_document:
+    toc: no
+    toc_float: no
+    number_section: yes
+    theme:  spacelab
+    df_print: paged
+    dev: png
+---
+
+\begin{titlepage}
+  \begin{center}
+M1 Economiste d'entreprise\\Projet Analyse de données exploratoire\\
+    \vspace{7.25cm}
+    \HRule
+    \vspace{0.005cm}\\
+    \textsc{\myfontsize{La qualité du café dépend-elle de sa provenance ?}}
+    \HRule
+    \vspace*{0.5cm}
+    \large{Aybuké \textsc{BICAT}, Basma \textsc{GHAFFOUR}}\\
+    \vspace{3.75cm}
+    \includegraphics[width=6cm]{logo_Mecen.jpg}\\
+    \vspace{3.75cm}
+Année universitaire 2022/2023
+  \end{center}
+\end{titlepage}
+
+\newpage
+
+# Introduction
+
+On a choisi de travailler sur les bases de données\footnote{\href{https://github.com/jldbc/coffee-quality-database/find/master}{Sources des bases de données}} portant sur le café.  La problématique est la suivante : la qualité du café dépend-elle de sa provenance ? On a travaillé sur une base de données qui contient 1339 observations et 44 variables. Pour y répondre on a fait le choix de faire une analyse factorielle des correspondances dans un premier temps.
+
+```{r options_chunk, echo = FALSE}
+
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      fig.align = 'center', dpi=220)
+options(encoding = "utf-8")
+
+```
+
+```{r creation fonction pour tableau en fonction du doc}
+
+library(pandoc)
+tabl<-function(x,y,z=NULL){
+  library(knitr)
+  outputform2<-pandoc_to()
+  if(outputform2=="html"){
+    library(kableExtra)
+    x %>% 
+    kable(caption=y) %>%
+    kable_styling(position = "center", full_width = F)}
+  else{x %>% 
+    kable(caption=y,options=z)}
+}
+
+```
+
+```{r importation des base de données}
+
+library(data.table)
+data1 <- fread("arabica_data_cleaned.csv",
+             stringsAsFactors = T)
+data1 <- as.data.frame(data1)
+#fread pour que toute les ligne puissent être lu sans le problème de chaine de caractère data1 est importé comme un data.table
+data2 <- read.csv("robusta_data_cleaned.csv",
+                  sep=",",
+                  dec=".",
+                  header=TRUE,
+                  stringsAsFactors = T)
+
+```
+
+```{r fusion des bases de donées et séléction des variables ,include=F}
+
+colnames(data1) == colnames(data2)
+names(data2) <- names(data1)
+dataOrn <- rbind(data1,data2)
+data <- dataOrn[,c(31,4)]
+
+```
+
+```{r data cleaned,include=F}
+
+Filtre <- which(rowSums(is.na(data))==0)
+data <- data[Filtre,]
+sum(is.na(data))
+
+```
+## Analyse descriptive
+
+Les variables sur lesquelles l'étude a été faite dans un premier temps sont  les variables portant sur la provenance du café et sur l'indice de qualité du café. La variable de l'indice de qualité du café est une variable quantitative. Cet indice nous indique pour chacune des observations le score qui a été attribué. Plus la note est élévée et plus c'est un café de bonne qualité.
+
+```{r graphique pour la distribution TCP,fig.width=4,fig.height=3 }
+
+library(dplyr)
+library(ggplot2)
+data %>% 
+  ggplot(aes(x=data$Total.Cup.Points))+
+  geom_histogram(binwidth=1,fill="#8C3A15",color="#8C3A15",alpha=0.6)+ 
+  theme_minimal()+
+  labs(x="Score de l'indice de qualité du café",y="Effectif")+
+  ggtitle("Distribution du score de l'indice de qualité")
+
+```
+
+Sur ce graphique on peut voir la distribution de l'indice de qualité du café, elle est concentrée essentiellement autour de 80. La variable à été recodé en variable qualitative qui prendra comme modalité plusieurs intervalles.
+
+```{r recode les indice de qualité en plusieurs modalité,include=FALSE}
+
+Idc<-data[,1]
+qtl<-as.matrix(quantile(Idc,probs = seq(0,1,1/6)))
+
+nam<-NULL
+
+for (i in 2:(length(qtl-1))){
+    nam[i-1]<-paste(qtl[i-1],"-",qtl[i])}
+
+recode_ind<-function(x){
+  case_when(x<=qtl[2]~nam[1],
+            x<=qtl[3]~nam[2],
+            x<=qtl[4]~nam[3],
+            x<=qtl[5]~nam[4],
+            x<=qtl[6]~nam[5],
+            TRUE~nam[6]
+  )
+}
+
+data<- data %>%
+  mutate(across(Total.Cup.Points, recode_ind))
+
+```
+
+```{r recode les pays de provenance en plusieurs regions du monde}
+
+library(forcats)
+data$Country.of.Origin=as.factor(data$Country.of.Origin)
+pays<-levels(data$Country.of.Origin)
+
+mod_supp<-pays[1]
+Filtre2<-which(data$Country.of.Origin==mod_supp)
+data<-data[-Filtre2,]
+
+data<-droplevels(data)
+pays<-levels(data$Country.of.Origin)
+
+data <- data %>% 
+    mutate(PaysOrigine = fct_collapse(Country.of.Origin,
+         AmeriqueSud=c(pays[c(1,4,7,25)]),
+         AmeriqueCentrale=c(pays[c(5,8,10,11,12,22,23,34)]),
+         AmeriqueNord =c(pays[c(20,32)]),
+         Afrique=c(pays[c(2,6,9,16,18,19,27,29,31,36)]),
+         AsieEst=c(pays[c(3,15,28)]),
+         AsieSud=c(pays[c(13,14,17,21,26,30,35)]),
+         Oceanie=c(pays[c(24,33)])))
+
+A<-fct_count(data$PaysOrigine)
+s<-sum(A[,2])
+A2<-as.matrix(A)
+
+p<-NULL
+for (i in 1:7){
+  p[i]<-paste(round((as.numeric(A2[i,2])/s)*100,1),"%",sep="")
+}
+
+A<-A[,1]
+A$proportion=p
+A3<-t(A)
+A3<-as.data.frame(A3)
+colnames(A3)=A3[1,]
+A3<-A3[-1,]
+
+```
+
+La seconde variable nous donne le pays de provenance du café pour chaque observation. Les pays que les observations peuvent prendre sont les suivants:
+`r pays`. On les a recodé pour que cette variable prenne 7 modalités qui sont 7 régions du monde.
+
+```{r tableau des proportions dobservation par region}
+tabl(A3,"Proportion d'observations par région")
+```
+
+Sur la table 1 on peut voir la proportion des observations que prennent chacune des modalités de la variable portant sur la région de provenance. On observe notamment que l'Océanie est la modalité la plus rare avec seulement `r A3[,7]` des observations qui prennent cette modalité.
+
+```{r création de la liste de la répartition des pays par région ,results='asis'}
+
+AmeriqueSud=c(pays[c(1,4,7,25)])
+AmeriqueCentrale=c(pays[c(5,8,10,11,12,22,23,34)])
+AmeriqueNord =c(pays[c(20,32)])
+Afrique=c(pays[c(2,6,9,16,18,19,27,29,31,36)])
+AsieEst=c(pays[c(3,15,28)])
+AsieSud=c(pays[c(13,14,17,21,26,30,35)])
+Oceanie=c(pays[c(24,33)])
+
+regionL=list(AmeriqueSud,AmeriqueCentrale,AmeriqueNord,Afrique,AsieEst,AsieSud,Oceanie)
+region<-c("AmeriqueSud","AmeriqueCentrale","AmeriqueNord","Afrique","AsieEst","AsieSud","Oceanie")
+
+m<-NULL
+n<-NULL
+o<-NULL
+p<-NULL
+L<-list(NULL)
+
+for (i in (1:length(region))){
+  m<-data[data$PaysOrigine==region[i],2]
+  n<-length(m)
+  L[[i]]=region[i]
+    for (j in (1:length(regionL[[i]]))){
+      o<-m[m==regionL[[i]][j]]
+      p<-round(length(o)/n,2)
+      L[[i]][j]=p
+    }
+}
+
+for (i in (1:length(region))){
+  names(L[[i]])=c(regionL[[i]])
+}
+
+names(L)=region
+
+L[[3]][3]="NA"
+L[[7]][3]="NA"
+
+for (i in (1:length(L))){
+  assign(x=paste("region",i,sep=""),value=,(data.frame(sort(L[[i]],decreasing = T)[1:3])))
+}
+
+Lregion<-list(region1,region2,region3,region4,region5,region6,region7)
+
+for (i in (1:length(Lregion))){
+  colnames(Lregion[[i]])="region"
+}
+
+for (i in 1:7){
+  Lregion[[i]]$Bilan=paste(
+    row.names(Lregion[[i]]),
+    paste(as.numeric((Lregion[[i]]$region))*100,"%", sep=" "),sep=": ")
+}
+
+Z<-data.frame(Lregion[[1]],Lregion[[2]],Lregion[[3]],Lregion[[4]])
+Z<-Z[,c(2,4,6,8)]
+colnames(Z)=region[1:4]
+rownames(Z)=NULL
+
+Z2<-data.frame(Lregion[[5]],Lregion[[6]],Lregion[[7]])
+Z2<-Z2[,c(2,4,6)]
+colnames(Z2)=region[5:7]
+rownames(Z2)=NULL
+
+tabl(Z,"Repartition des pays par régions (1/2)")
+
+```
+
+```{r tableau des proprotions des pays par region }
+
+tabl(Z2,"Repartition des pays par régions (2/2)")
+
+```
+
+Pour chaque nouvelle modalité de provenance, on peut voir sur les table 2 et 3 que les pays à l'intérieur de chaque région sont inégalement représentés.\footnote{Sur les tableaux 2 et 3 seul les 3 pays les plus représentés dans la modalité de la variable portant sur la région de provenance sont visibles}
+
+# AFC
+
+```{r cration de notre tableau croisé}
+
+data<-data[,-2] 
+tab<-table(data$Total.Cup.Points,data$PaysOrigine)
+
+```
+
+
+```{r tableau croisé de lAFC,results='asis'}
+
+tabl(tab,"Tableau croisé sur lequelle porte l'AFC")
+
+```
+
+Sur la table 4 on peut voir le tableau croisé sur lequel a été fait notre AFC.
+
+## Profils colonnes
+
+```{r profil colonnes}
+
+d<-as.data.frame.matrix(tab)
+pcl<-d %>% 
+  as.matrix() %>% 
+  proportions(margin = 2) %>%
+  addmargins(margin=1)%>%  
+  round(digits=4)*100 
+
+rownames(pcl)[7]<-"Total"
+
+tabl(pcl,"profil colonne") 
+
+```
+
+Sur la table 5, on peut voir que l'on a environ **`r round(pcl[6,2],0)`%** des données qui prennent la modalité **Afrique** sont comprises dans l'intervalle **`r nam[6]`**. On peut aussi voir que parmis les données qui prennent la modalité **AmeriqueNord**, **`r round(pcl[1,6],0)`%** environ sont comprise dans l'intervale **`r nam[6]`**. 
+
+## Profils lignes
+
+```{r profil ligne}
+prow <-d %>% 
+  as.matrix() %>% 
+  proportions(margin = 1) %>%
+  addmargins(margin=2)%>% 
+  round(digits=4)*100 
+
+colnames(prow)[8]<-"Total"
+
+tabl(prow,"profil ligne")
+
+```
+
+Dans la table 6 on peut voir qu'environ **`r round(prow[1,6],0)`%** des observations qui prennent la modalité **`r nam[1]`** prennent la modalité **AmeriqueNord**, mais on a aussi **`r round(prow[1,4],0)`%** qui prennent la modalité **AmeriqueCentrale**. Parmis les observations qui prennent la modalité **`r nam[6]`**, environ **`r round(prow[6,2],0)`%** proviennt d'**Afrique**. Ce qui nous donne déjà une première indication sur la provenance du meilleur café.
+
+```{r afc}
+library(factoextra)
+library(FactoMineR)
+resafc<-CA(d,graph=F)
+```
+
+## Inerties
+
+```{r representation des part dinertie,fig.width=4,fig.height=3}
+
+fviz_screeplot(resafc, addlabels=T, ncp=5, barfill = "#900C3F", barcol="white")+
+  ggtitle("Représentation des parts d’inerties")+
+  xlab("Axes")+
+  ylab("Inerties")+
+  coord_cartesian(ylim=c(0,80))
+
+```
+
+```{r tabelau des inerties par dimentions}
+
+Int<-round(t(resafc$eig),3)
+
+names<-c()
+for (i in 1:ncol(Int)) {
+names[i]<-paste("F",i,sep="")
+}
+colnames(Int)<-names
+names2<-c("Inerties",
+          "Inerties relatives (%)",
+          "Inertie relatives cumulées (%)")
+rownames(Int)<-names2
+
+```
+
+```{r}
+tabl(Int,"Part d'Inertie")
+```
+
+Sur ce graphique, on peut voir les inerties relatives pour chacun des axes. On a fait le choix de garder les deux premiers axes qui cumulent environ **`r round(Int[3,2],0)`%** de l'inertie totale.
+
+## Graphique
+
+```{r graphique afc,fig.width=6,fig.height=4}
+
+library(patchwork)
+fviz_ca_biplot(resafc,
+               col.row="#8C3A15",
+               col.col="#C66A3F",
+               jitter=list("label",0,0.05)) + 
+                geom_path(x=resafc$row$coord[,1],y=resafc$row$coord[,2],col="#7A4D0F")+
+  theme_minimal()
+
+```
+
+D'après ce graphique, on voit globalement sur l'axe des abscisses une relation croissante pour les intervalles des indices de qualité. Plus on va du coté positif de l'axe 1 plus on aura un intervalle des indices de qualité avec de bornes élevées. 
+Les intervalles **`r nam[2]`** et **`r nam[3]`**  permettent de différencier l'axe des ordonnées.
+
+
+## Etude du 1er axe
+
+```{r graphqiue des contributions pour laxe 1,fig.height=3,fig.width=7}
+
+library(ggpubr)
+
+fig1<-fviz_contrib(resafc,choice="col", fill = "#C66A3F", color = "#C66A3F") + ggtitle("Contributions axe 1", subtitle = "Continent")
+fig2<-fviz_contrib(resafc,choice="row", fill= "#8C3A15" , color = "#8C3A15") + ggtitle("Contributions axe 1", subtitle = "Score du café")
+ggarrange(fig1, fig2, ncol = 2)
+
+```
+
+On peut voir que pour l'axe 1 on a l'**Amérique du Nord** et l'**Afrique** ainsi que les intervalles **`r nam[1]`** et **`r nam[6]`** qui contribuent le plus. Sur le graphique précédent, on note qu'à l'extrémité gauche on a l'**Amérique du Nord** et l'intervalle **`r nam[1]`** qui sont associés. Et à l'autre extrémité de l'axe, la variable **Afrique** et l'intervalle **`r nam[6]`** qui sont liés.
+
+## Etude du 2nd axe
+```{r graphique des contribution pour laxe 2,fig.height=3,fig.width=7}
+
+fig1<-fviz_contrib(resafc,choice="col", axes = 2, fill = "#C66A3F", color = "#C66A3F")  + ggtitle("Contributions axe 2", subtitle = "Continent")
+fig2<-fviz_contrib(resafc,choice="row", axes = 2,fill= "#8C3A15" , color = "#8C3A15") + ggtitle("Contributions axe 2", subtitle = "Score du café")
+ggarrange(fig1, fig2, ncol = 2)
+
+```
+
+Pour l'axe 2, les modalités **Amérique du Sud** et **Afrique** ainsi que les deux intervalles ayant les bornes les plus élevées du score du café contribuent le plus. On peut voir sur le graphique précédent que sur l'extrémité de l'axe 2, les modalités **Afrique** et **`r nam[6]`** sont associées. Sur l'autre extrémité la variable **Amerique du Sud** et **`r nam[5]`** se rassemblent. 
+
+On peut donc en conclure que les meilleurs cafés, ceux qui ont obtenu **le meilleur score proviennent d'Afrique** essentiellement, suivi de l'Amérique du Sud. **Ceux qui ont le score le plus faible proviennt d'Amérique du Nord**.
+On trouve qu'en fonction de la région de provenance du café, on a des scores significativement différents, mais pourquoi? Est-ce qu'il y a aurait des caractéristiques propres à la région de provenance qui pourraient expliquer que le café serait meilleur? Des caractéristiques propres aux régions et indépendantes des choix que le producteur pourrait faire. On essaira d'y répondre avec une analyse par composante multiple.
+
+# ACM
+
+Pour apporter plus d'explications à nos précédents résultats, on a choisi d'étudier, en plus des variables précédentes, **l'altitude moyenne en mètres** ainsi que le **taux d'humidité**. En effet, l'altitude est propre à chaque région et le producteur n'a aucun contrôle dessus. On a decidé de recoder l'altitude en variable qualitative qui prend 3 modalités : 2 intervalles et une modalité NA pour les données absentes ou aberrantes. Pour l'humidité, on l'a aussi recodé en variable qualitative, mais on a fait le choix de la laisser en **variable qualitative supplémentaire** car on ne savait pas si c'était l'humidité du climat ou celle qui a été choisi de laisser dans le produit final par le producteur. Pour la variable de provenance, elle est identique à celle de la partie précédente, mais pour celle de l'indice de qualité on n'a plus que 5 intervalles et non 6.
+
+
+```{r selection des variable qui nous intéresse ,include=F}
+
+data<-dataOrn[,c(2,41,32,31,20,31,4,44)]
+
+```
+
+```{r recode la variable Total.Cup.Points, include=F}
+
+Idc_bis<-data[,4]
+qtl_bis<-as.matrix(quantile(Idc_bis,probs = seq(0,1,1/5)))
+
+nam_bis<-NULL
+
+for (i in 2:(length(qtl_bis-1))){
+    nam_bis[i-1]<-paste(qtl_bis[i-1],"-",qtl_bis[i])}
+
+recode_ind_bis<-function(x){
+  case_when(x<=qtl_bis[2]~nam_bis[1],
+            x<=qtl_bis[3]~nam_bis[2],
+            x<=qtl_bis[4]~nam_bis[3],
+            x<=qtl_bis[5]~nam_bis[4],
+            TRUE~nam_bis[5]
+  )
+}
+
+data<- data %>% 
+  mutate(across(Total.Cup.Points, recode_ind_bis))
+data$Total.Cup.Points<-as.factor(data$Total.Cup.Points)
+levels(data$Total.Cup.Points)
+
+```
+
+```{r recode la provenance,include=F}
+
+data <- data %>% 
+    mutate(PaysOrigine = fct_collapse(Country.of.Origin,
+         AmeriqueSud=c(pays[c(1,4,7,25)]),
+         AmeriqueCentrale=c(pays[c(5,8,10,11,12,22,23,34)]),
+         AmeriqueNord =c(pays[c(20,32)]),
+         Afrique=c(pays[c(2,6,9,16,18,19,27,29,31,36)]),
+         AsieEst=c(pays[c(3,15,28)]),
+         AsieSud=c(pays[c(13,14,17,21,26,30,35)]),
+         Oceanie=c(pays[c(24,33)])))
+data<-data[-Filtre2,]
+
+```
+
+```{r recode la variable Moisture,include=F}
+
+which(is.na(data$Moisture)==1)# On a aucune donnée manquante pour cette variable
+
+mod<-NULL
+Msr<-data[,3]
+
+qtl2<-as.matrix(quantile(Msr,probs = seq(0,1,1/3)))
+
+for (i in 2:(length((qtl2)-1))){
+    mod[i-1]<-paste(qtl2[i-1],"-",qtl2[i])}
+
+recode_ind2<-function(x){
+  case_when(x<=qtl2[2]~mod[1],
+            x<=qtl2[3]~mod[2],
+            TRUE~mod[3]
+  )
+}
+
+data<- data %>%
+  mutate(across(Moisture, recode_ind2))
+
+```
+
+```{r recode la variable altitude,include=F}
+
+which(is.na(data$altitude_mean_meters)==1)
+Filtre5 <- which(data$altitude_mean_meters>3500)
+data$altitude_mean_meters[Filtre5]=NA
+Alt<-data[,8]
+Filtre3<-which(is.na(Alt))
+Alt<-Alt[-Filtre3]
+
+mod2<-NULL
+qlt3<-as.matrix(quantile(Alt,probs = seq(0,1,1/2)))
+
+for (i in 2:(length((qlt3)-1))){
+    mod2[i-1]<-paste(qlt3[i-1],"-",qlt3[i])}
+
+recode_ind3<-function(x){
+  case_when(x<=qlt3[2]~mod2[1],
+            x<=qlt3[3]~mod2[2],
+            TRUE~"NA"
+  )
+}
+
+data<- data %>%
+  mutate(across(altitude_mean_meters, recode_ind3))
+
+```
+
+
+```{r selection des variable etudie,include=F}
+
+data<-data[,c(1,3,4,5,8,9)]
+data_bis<-data[,c(3,5,6,2)]
+data_bis$altitude_mean_meters<-as.factor(data_bis$altitude_mean_meters)
+
+```
+
+
+```{r tableau des proportion des modalite de altitude}
+B<-fct_count(data$altitude_mean_meters)
+p2<-NULL
+s<-sum(B[,2])
+B2<-as.matrix(B)
+for (i in 1:3){
+  p2[i]<-paste(round((as.numeric(B2[i,2])/s)*100,1),"%",sep="")
+}
+B<-B[,1]
+B$proportion=p2
+B3<-t(B)
+B3<-as.data.frame(B3)
+colnames(B3)=B3[1,]
+B3<-B3[-1,]
+```
+
+
+```{r ACM,include=F}
+
+acm<-MCA(data_bis,graph=F,quali.sup=4)
+
+```
+
+## Inerties
+```{r graphique de la variance,fig.width=4,fig.height=3}
+
+fviz_screeplot(acm, choice = "variance", ncp = 20,
+               main ="Percentage of explained variances",
+               addlabels = T,  ylab=" ",
+               barfill = "#900C3F", barcol="white")+
+  coord_cartesian(ylim=c(0,18))
+
+```
+
+D'après le graphique des inerties, on peut voir que :
+
+- Les 2 premiers axes conservent  **26%** de l'inertie totale.
+- L'axe F3 conserve **10.2%** de l'inertie.
+- Les axes F4, F5 et F6 conservent une part similaire de l'inertie, avec environ **8%** de l'inertie pour chacun.
+
+On décide donc de retenir les **4 premiers axes** car ils expliquent environ **45%** de l'inertie totale pour la suite de notre étude.
+
+## Etude des individus
+```{r representtion des individues,fig.width=7,fig.height=3}
+
+fviz_mca_ind(acm, geom="point",  col.ind = "cos2" , gradient.cols = c("#D36A39", "#C66A3F", "#AF6645"),repel = TRUE, alpha = 0.6, axes = c(1,2),ggtheme = theme_minimal()) +
+fviz_mca_ind(acm, geom="point",  col.ind = "cos2" ,gradient.cols = c("#D36A39", "#C66A3F", "#AF6645"),
+                repel = TRUE, alpha = 0.6, axes = c(3,4),
+                ggtheme = theme_minimal())
+
+```
+
+Pour la représentation des individus, on observe la formation de 3 groupes sur **(F1,F2)**. On a un groupe assez détaché des autres, qui regroupe donc les individus extrêmes. Pour les 2 autres groupes on observe une relation linéaire avec un groupe qui comporte beaucoup plus d'individus que l'autre. Sur **(F3,F4)**, on observe + de groupes qui se situent aux extrêmités, ainsi qu'un grand groupe d'individus assez concentrés au milieu.  
+
+### Contribution des individus
+```{r contribution des individues,fig.height=4,fig.width=7}
+
+(fviz_contrib(acm, choice = "ind",1, col = c("#C66A3F"))+ fviz_contrib(acm, choice = "ind",2, col = c("#C66A3F")))/ 
+(fviz_contrib(acm, choice = "ind",3, col = c("#C66A3F"))+ fviz_contrib(acm, choice = "ind",4, col = c("#C66A3F")))
+
+```
+
+D'après les graphiques de contribution des individus, on s'aperçoit qu'en dimension 1, il y a peu d'individus qui contribuent beaucoup (+ de 0.4%) et on peut voir qu'il y a une relation décroissante assez rapide de ce taux. 
+
+En dimension 2, il y a un peu plus d'individus qui contribuent à + de 0.5%, puis il y a une concentration aux alentours des 0.2%. 
+
+Pour la dimension 3, les contributions sont comprises entre 0.1% et 0.3% et beaucoup d'individus contribuent à cette dimension de façon moindre que dans les autres dimensions.
+
+Très peu d'individus contribuent à la dimension 4 et on peut observer une chute des contribution qui passe de 0.75% à environ de 0.2%.
+
+## Etudes des variables et des modalités
+```{r representation des variables,fig.height=3,fig.width=6}
+
+fviz_mca_var(acm, choice = "var", axes = c(1,2), # pb de non ajustement des coordonnées
+             repel = TRUE, col.var = "orange", 
+             col.quanti.sup = "darkgreen", col.quali.sup = "orange",labelsize=2) +
+  
+fviz_mca_var(acm, choice = "var", axes = c(3,4), # pb de non ajustement des coordonnées
+             repel = TRUE, col.var = "orange", 
+             col.quanti.sup = "darkgreen", col.quali.sup = "orange",labelsize=2)
+
+```
+
+On observe ici que les variables sont expliquées de la même manière dans les différentes dimensions. 
+En effet, **Total.Cup.Points** est mieux expliqué par les axes 1 et 3 à la même hauteur.
+D'autre part, **PaysOrigine** et **altitude_mean_metters** semblent être bien expliqués par les 2 axes dans chacun des graphiques, même s'il y a une petite différence et que les axes 2 et 4 les expliquent légèrement plus.
+Enfin, la variable qualitative supplémentaire **Moisture** semble être expliquée très faiblement par l'axe 1. 
+
+### Modalités 
+```{r representation des modalite,fig.height=3.5,fig.width=6}
+
+var <- rownames(acm$var$coord) 
+fviz_mca_var(acm, choice = "var.cat", axes = c(1,2),
+                invisible = "quali.sup", col.var = var, 
+                repel = TRUE, labelsize = 3,
+                ggtheme = theme_minimal()) 
+
+fviz_mca_var(acm, choice = "var.cat", axes = c(3,4),
+                invisible = "quali.sup", col.var = var, 
+                repel = TRUE, labelsize = 3,
+                ggtheme = theme_minimal()) 
+  
+ library(wesanderson) 
+
+```
+
+
+Graphiquement sur **(F1,F2)**, on peut voir la formation d'une bissectrice par rapport aux axes 1 et 2, qui fait apparaitre 2 groupes. En effet, on peut voir un groupe dans le côté négatif de l'axe 1, où les modalités des scores les plus bas comme **`r nam_bis[1]`** et **`nam_bis[2]`** s'associent bien avec les pays tels **AsieEst**, **AmeriqueNord** et **AsieSud** qui sont tous liés à la modalité **1-1310.64** mètres d'altitude. On peut déjà dire que les cafés les moins bons viennent plutôt d'endroits d'altitude basse. 
+
+Le 2ème groupe qu'on voit sur cette bissectrice est celui qui regroupe l'**Afrique** et l'**AmériqueSud** qui ont un score de **83-83.92** et qui sont à des altitudes entre **1310.64-3500** mètres. 
+
+Par ailleurs, il y a aussi une région, **l'AmériqueCentrale** avec un score de **82.08-83** qui se trouve au centre de ces 2 groupes, on verra par la suite auquel de ces groupes il appartient.
+
+On a aussi un 3ème groupe, **l'Océanie** qui semble être lié à la modalité **NA** d'altitude, on peut penser que ce groupe prend des modalités extrêmes, donc les modalités rares et que les données d'altitude données pour ce groupe étaient fausses, d'où le fait qu'il se retrouve très loin des autres.
+
+Pour **(F3,F4)**, les régions telles que **AsieSud**, **AmeriqueNord** et **AmeriqueCentrale** ainsi que le score de **82.08-83**, semblent expliqués l'axe 4. Puis on a des modalités qui se retrouvent autour de l'axe 3, ils sont moins bien représentés et on n'arrive plus à apercevoir de groupes.
+
+### Contributions des variables
+```{r contribution des individue,fig.height=5,fig.width=7 }
+
+(fviz_contrib(acm, choice = "var", axes = 1, fill= "#8C3A15" , color = "#8C3A15") + fviz_contrib(acm, choice = "var", axes = 2, fill= "#8C3A15" , color = "#8C3A15")) /
+(fviz_contrib(acm, choice = "var", axes = 3, fill= "#8C3A15" , color = "#8C3A15") +
+fviz_contrib(acm, choice = "var", axes = 4, fill= "#8C3A15" , color = "#8C3A15"))
+
+```
+Pour les contributions des modalités, on voit que :
+
+- Les modalités **NA**, **1-1310.64**, **Océanie**, **AmériqueNord**, **Afrique** et le score de **83.92 - 90.58**  expliquent  mieux la dimension 1.
+- La dimension 2 est expliquée par les modalités comme l'altitude de **1310.64-3500** et **NA**, les régions tels **l'Océanie** et **l'Afrique**, et un score de **0-80.67**.
+- Pour la dimension 3, ce sont **l'AmériqueSud**, avec des scores de  **83 - 83.92**, **0 - 80.67** et **82.08-83** qui contribuent le plus à cette dimension.
+- Enfin, **AsieEst** ainsi que les scores **82.08-83** et **83.92 - 90.58** contribuent le plus à la dimension 4.
+
+
+On peut par ailleurs noter qu'aucune modalité d'altitude contribue aux axes 3 et 4.
+
+## Individus en fonction des variables
+```{r representation variable groupe1,fig.width=9,fig.height=4}
+
+fviz_mca_ind(acm, geom= "point", axes =c(1,2),
+   habillage= "Moisture", addEllipses=T, palette = "futurama", alpha = 0.6, ellipse.level=0.95) +
+   theme_minimal() +
+
+fviz_mca_ind(acm, geom= "point", axes =c(1,2),
+   habillage= "altitude_mean_meters", addEllipses=T, palette = "futurama", alpha = 0.6, ellipse.level=0.95) +
+   theme_minimal()
+
+```
+
+Pour **l'humidité** qui est la variable qualitative supplémentaire, on s'aperçoit que les barycentres des modalités de cette variable sont très proches, et chaque groupe se supperpose. On en conclue que l'humidité ne sert pas à expliquer le score des cafés.
+
+Pour **l'altitude**, on voit bien l'apparition de 3 groupes en fonction de l'altitude qu'on a observé sur le graphique des modalités. On retrouve bien les 2 groupes qui forment la bissectice avec le 1er groupe qui prend une altitude de **1-1310.64** mètres, le groupe 2 qui comprend les individus ayant une altitude de **1310.64-3500** mètres et enfin le groupe NA qui contient les valeurs extrêmes ainsi qu'une concentration de pays au centre qui se sont retrouvés dans ce groupe du fait qu'ils avaient des valeurs aberrantes d'altitude. On voit qu'il y a quand même une superposition entre ces différents groupes qui doivent sûrement être du à des individus qui prennent des modalités similaires.
+
+
+```{r representation variable groupe,fig.width=5,fig.height=3}
+
+fviz_mca_ind(acm, geom= "point", axes =c(1,2),
+   habillage= "Total.Cup.Points", addEllipses=T, palette = "futurama", alpha = 0.6, ellipse.level=0.95) +
+   theme_minimal()
+
+```
+
+
+Pour **le score du café**, on peut remarquer qu'on a une relation linéaire. En effet, en commençant du haut on peut voir qu'on a les scores de cafés les plus bas et plus on descend et plus on obtient des scores de café élevés. On voit cette même relation avec les barycentres avec 2 groupes qui sont assez proches, qui sont les individus des groupes **80.67 - 82.08** et **82.08 - 83** . 
+
+D'autre part, on constate un groupe d'individus extrêmes en dehors des ellipses qui prend chacune des modalités du score et qui suit aussi cette relation.
+
+# Classification
+
+On va faire une classification avec consolidation pour avoir directement des classes homogènes. 
+Par défaut, R fait une classification avec 6 groupes.
+
+```{r classification}
+cah <- HCPC(acm, consol = TRUE, nb.clust = 3, graph = FALSE)
+```
+
+## Nombre de clusters
+```{r graphique du nb optimal de cluster,fig.height=3,fig.width=4}
+fviz_nbclust(acm$ind$coord, hcut, method = "silhouette") +
+  labs(subtitle = "Silhouette method")
+```
+Même si la méthode de Silhouette nous montre qu'il faudrait garder 2 groupes, on décide d'en prendre **3** pour retrouver les groupes trouvés en ACM, car en prenant 2 groupes on va mélanger tous les individus qui sont sur la bissectrice alors qu'on a vu qu'ils se divisaient en 2 groupes.
+
+```{r, fig.width=7,fig.height=3.5}
+
+library(patchwork)
+library(ggplot2)
+
+barplot <- data.frame(categories = 1:10, values = cah$call$t$inert.gain[1:10])
+
+
+fviz_dend(cah, main = "Classification sur les données brutes \n avec la méthode de Ward",palette="OrRd") +
+ggplot(barplot, aes(x = categories, y = values)) + 
+  geom_bar(stat = "identity", fill = "#EEB56F") +
+  theme_minimal()+
+  ggtitle("Between inertia gain")+
+  xlab("")+
+  ylab("Gain d'inertie")
+
+```
+
+On peut voir grâce à ces graphiques une baisse importante du gain d'inertie intra à partir du 4ème cluster, ce qui se justifie aussi grâce au dendogramme.
+
+
+En faisant le test  du $\chi ^{2}$, on voit que les variables expliquent très bien la partition. On continue donc notre étude avec **3 clusters**.\footnote{On peut voir les résultats du test sur la table 17 en annexe}
+
+## Visualisation des groupes
+```{r visualisation des groupes,fig.width=7,fig.height=3}
+fviz_cluster(cah, geom = c("point","text"), 
+             show.clust.cent = TRUE, alpha = 0.8, ellipse.type = "convex",repel = TRUE,
+             palette = "futurama", 
+             ggtheme = theme_minimal()) +
+  labs(title= "Visualisation des groupes") +
+  
+fviz_cluster(cah, geom= "point", axes = c(3,4),
+             show.clust.cent = TRUE, alpha = 0.8, ellipse.type = "convex",
+             palette = "futurama", 
+             ggtheme = theme_minimal()) +
+  labs(title= "Visualisation des groupes") 
+```
+
+
+D'après cette représentation graphique, on peut voir que les groupes sont bien distingués sur l'axe **(F1,F2)**, on retrouve 2 groupes qui sont en effet les groupes qu'on a étudié sur la bissectrice, qui comportent les individus prenant pour la plupart des altitudes de **1 - 1310.64**m pour le groupe 1 et **1310.64 - 3500**m pour le cluster 2 comme on avait pu le voir sur le graphique des individus en fonction des altitides. 
+
+On retrouve aussi le groupe avec les individus prenant les modalités extrêmes, c'est-à-dire **NA** et **l'Océanie**, ainsi qu'un groupe d'individus plus nombreux qui est plus proche du centre qui s'est retrouvé dans le cluster 3 car ils prennent la modalité **NA**. 
+
+Sur l'axe **(F3,F4)**, tous les groupes se supperposent, on n'arrive pas à faire de conclusion sur ces dimensions donc on poursuivra notre étude uniquement sur les axes 1 et 2. 
+
+## Composition des clusters
+```{r}
+tabl(round(cah$desc.var$category$"1"[c(-5,-7,-10,-11,-12,-13,-15),], 2),"Composition du cluster 1")
+```
+
+Dans le cluster 1 : 
+
+- Les individus de ce cluster viennent principalement des régions d'Amérique telles que : **38%** des individus sont d'**AmeriqueNord**, **22.5%** d'**AmeriqueCentrale** et environ **18%** d'**AmeriqueSud**.
+- **58%** des individus qui prennent les modalité de score de **0 - 80.67** et **80.67 - 82.08** sont dans ce cluster. On peut donc voir que les individus qui prennent les modalités de scores les plus faibles se sont retrouvés dans le cluster 1.
+- **82%** des individus de ce cluster ont une altitude de **1 - 1310.64**.
+
+On peut voir l'opposition avec l'altitude **1310.64 - 3500** où seulement **17.46%** des individus de ce cluster prennent cette modalité malgré le fait qu'on avait vu graphiquement que ces 2 groupes d'altitude se supperposaient. 
+
+```{r}
+tabl(round(cah$desc.var$category$"2"[c(-6,-7,-10,-11,-14),],2),"Composition du cluster 2")
+```
+
+Dans le cluster 2 : 
+
+- **100%** des individus prenant les modalités **Afrique, AmeriqueCentrale, AmeriqueSud et AsieSud** sont dans le cluster 2. Les individus dans ce cluster se divisent principalement ainsi : **30.63%** des individus de ce cluster viennent d’**Afrique**, **32.2%** d’**AmériqueCentrale**, **29%** d’**AmériqueSud**, et **4.55%** d’**AsieSud**.
+- Environ **85.38%** des individus de ce cluster prennent la modalité **1310.64 - 3500**. On retrouve aussi que **11%** des individus du cluster ont une altitude de **1 - 1310.64** mètres.
+- Il y a environ **39.3%** des individus qui prennent la modalité de score de **83.92 - 90.58**, **17.6%** qui ont un score de **80.67 - 82.08**, on peut donc voir l'opposition entre les régions qui ont le meilleur score de café et ceux qui ont un des scores les plus faibles.
+
+
+```{r}
+tabl(round(cah$desc.var$category$"3"[c(-3,-8,-9,-10,-11,-12,-13),],2),"Composition du cluster 3")
+```
+
+
+- **100%** des individus venant d'**Océanie** sont dans ce cluster et représentent environ **34%** des individus.
+- Plus de **60%** des individus viennent d'**AmeriqueSud**, d'**AmeriqueCentrale** et d'**AsieSud**.
+- **98%** des individus de cette classe prennent la modalité **NA** pour l'altitude, ce qui explique que ce groupe était détaché comparé aux 2 autres.
+
+Dans ce cluster, la modalité commune de ces régions est **NA**. 
+
+
+## Parangons 
+
+
+```{r, echo=FALSE}
+tabl(data_bis[labels(cah$desc.ind$para$'1'),],"Parangon du cluster 1")
+```
+
+D'après ce tableau, on voit que l'**AmériqueSud** a un score de **0 - 80.67**, alors qu'en AFC on trouvait un score plus élevé. Cette différence peut venir du fait qu'on a recodé la variable **Total.Cup.Points**.
+
+```{r, echo=FALSE}
+tabl(data_bis[labels(cah$desc.ind$para$'2'),],"Parangon du cluster 2")
+```
+
+Les parangons du cluster 2 sont des individus d'**Afrique** avec un score de **82.08 - 83** et majoritairement l'altitude la plus basse.
+
+
+```{r, echo=FALSE}
+tabl(data_bis[labels(cah$desc.ind$para$'3'),],"Parangon du cluster 3")
+```
+
+Pour le cluster 3, les parangons viennent d'**AmeriqueSud**, on retrouve bien la modalité **NA**, qui est associée au score de café le plus faible soit de **0 - 80.67**.
+
+## Individus extrêmes
+
+```{r, echo=FALSE}
+tabl(data_bis[labels(cah$desc.ind$dist$'1'),],"Individus extrêmes du cluster 1")
+```
+
+Pour les indivivus extrêmes du cluster 1, on se retrouve avec des individus d'**AsieEst** qui prennent la modalité **1 - 1310.64** pour l'altitude, et un des scores de café les plus bas, soit **80.67 - 82.08**.
+
+```{r, echo=FALSE}
+tabl(data_bis[labels(cah$desc.ind$dist$'2'),],"Individus extrêmes du cluster 2")
+```
+
+Les individus extrêmes du cluster 2 viennent d'Afrique avec une altitude de **1310.64 - 3500** mètres avec un score de café assez élevé, soit **83 - 83.92**.
+
+```{r, echo=FALSE}
+tabl(data_bis[labels(cah$desc.ind$dist$'3'),],"Individus extrêmes du cluster 3")
+```
+
+Pour les individus du cluster 3, on retrouve encore l'**Océanie** avec cette fois-ci le score de café le plus faible et toujours l'altitude **NA**.
+
+
+# Conclusion
+
+On peut conclure qu'en plus de la variable de provenance, l'altitude a un impact sur l'indice de qualité du café. **On a pu voir que plus l'altitude est élevé plus le café est de meilleur qualité**. Sur la classification, les différents clusters nous ont montré qu'en fonction de la région et de l'altitude on pouvait avoir des scores significativement différents. Mais on peut nuancer ces résultats qui sont sûrement du fait que l'on a réduit le nombre de modalités dans le recodage de la variable de l'indice de qualité du café. On peut aussi souligner le fait que géographiquement, les régions sont vastes et les pays composants les régions sont inégalements réparties comme il a été énoncé dans les tables 2 et 3. Au sein d'une même région, les altitudes peuvent aussi être différents ce qui nous pousse à nuancer nos résultats. 
+
+\newpage{}
+
+# Annexe
+`
+
+```{r test}
+tabl(cah$desc.var$test.chi2,"résultat du test du khi deux")
+```
+
+```{r}
+tabl(B3,"proportion d'observations par modalité d'altitude")
+```
+
+
+
+
+
+
+
+
+
+
+
